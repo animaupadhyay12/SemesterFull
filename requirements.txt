@@ -1,5 +1,6 @@
-streamlit>=1.10.0
+streamlit 
 requests
-pandas 
-matplotlib 
+json
+pandas
 datetime
+os
