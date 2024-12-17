@@ -5,11 +5,11 @@ import pandas as pd
 import matplotlib.pyplot as plt
 import datetime
 import os
- 
+
 # File to store the last fetch date
 DATE_TRACKER_FILE = "last_fetch_date.json"
 DATA_FILE = "bls_data.csv"
- 
+
 # Function to check the last update date
 def should_update_data():
     if not os.path.exists(DATE_TRACKER_FILE):
@@ -18,12 +18,12 @@ def should_update_data():
         data = json.load(file)
         last_fetch_date = datetime.datetime.strptime(data["last_fetch"], "%Y-%m-%d")
     return (datetime.datetime.now() - last_fetch_date).days >= 30
- 
+
 # Function to save the current fetch date
 def update_fetch_date():
     with open(DATE_TRACKER_FILE, "w") as file:
         json.dump({"last_fetch": datetime.datetime.now().strftime("%Y-%m-%d")}, file)
- 
+
 # Function to fetch and process data
 def fetch_bls_data():
     headers = {'Content-type': 'application/json'}
@@ -34,10 +34,13 @@ def fetch_bls_data():
         "startyear": str(last_year),
         "endyear": str(current_year)
     })
- 
+    
     response = requests.post('https://api.bls.gov/publicAPI/v2/timeseries/data/', data=data, headers=headers)
     json_data = json.loads(response.text)
- 
+    
+    # Inspect the raw API response
+    st.write(json_data)
+
     all_series_data = []
     for series in json_data.get('Results', {}).get('series', []):
         seriesId = series['seriesID']
@@ -49,7 +52,7 @@ def fetch_bls_data():
                     "Month": int(item['period'][1:]),
                     "Value": float(item['value'])
                 })
-   
+
     if all_series_data:
         df = pd.DataFrame(all_series_data)
         df.to_csv(DATA_FILE, index=False)  # Save data locally
@@ -58,7 +61,7 @@ def fetch_bls_data():
     else:
         st.error("No data was returned from the BLS API. Check the API request.")
         return pd.DataFrame()
- 
+
 # Load data if available, or fetch it
 if not os.path.exists(DATA_FILE) or should_update_data():
     st.info("Fetching updated data...")
@@ -68,32 +71,32 @@ if not os.path.exists(DATA_FILE) or should_update_data():
 else:
     data = pd.read_csv(DATA_FILE)
     st.info("Data is up to date.")
- 
+
 # Dashboard Layout
 st.title("BLS Monthly Data Dashboard")
 st.write("This dashboard displays the latest BLS data trends.")
- 
+
 # Display Last Update Date
 if os.path.exists(DATE_TRACKER_FILE):
     with open(DATE_TRACKER_FILE, "r") as file:
         last_fetch_date = json.load(file)["last_fetch"]
         st.subheader(f"Last Data Update: {last_fetch_date}")
- 
+
 # Data Table Display
 if not data.empty:
     st.subheader("Data Table")
     st.write(data)  # Display data using st.write for compatibility
- 
+
     # Visualization
     st.subheader("Data Visualization")
     series_ids = data['Series ID'].unique()
- 
+
     for series_id in series_ids:
         st.write(f"### Series: {series_id}")
-        series_data = data[data['Series ID'] == series_id]
+        series_data = data[data['Series ID'] == series_id].copy()
         series_data['Date'] = pd.to_datetime(series_data[['Year', 'Month']].assign(day=1))
         series_data = series_data.sort_values('Date')
- 
+
         # Plot using Matplotlib
         fig, ax = plt.subplots()
         ax.plot(series_data['Date'], series_data['Value'], marker='o', linestyle='-')
@@ -104,4 +107,3 @@ if not data.empty:
         st.pyplot(fig)
 else:
     st.warning("No data available to display.")
-    
