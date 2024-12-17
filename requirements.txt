@@ -1,1 +1,7 @@
 streamlit
+requests
+json
+pandas 
+matplotlib.pyplot 
+datetime
+os
