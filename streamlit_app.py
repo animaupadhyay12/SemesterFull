@@ -30,13 +30,16 @@ def fetch_bls_data():
     current_year = datetime.datetime.now().year
     last_year = current_year - 1
     data = json.dumps({
-        "seriesid": ["LNS14000000", "CES0000000001"],
+        "seriesid": [
+            "LNS14000000", "CES0000000001", "LNS11000000", 
+            "LNS12000000", "LNS13000000", "CES0500000002", "CES0500000007"
+        ],
         "startyear": str(last_year),
         "endyear": str(current_year)
     })
     
-    response = requests.post('https://api.bls.gov/publicAPI/v2/timeseries/data/', data=data, headers=headers)
-    json_data = json.loads(response.text)
+    p = requests.post('https://api.bls.gov/publicAPI/v2/timeseries/data/', data=data, headers=headers)
+    json_data = json.loads(p.text)
     
     # Inspect the raw API response
     st.write(json_data)
