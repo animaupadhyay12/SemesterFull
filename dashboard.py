@@ -1,49 +1,47 @@
 import streamlit as st
 import pandas as pd
-import matplotlib.pyplot as plt
-import datetime
 import os
-import json
 
-DATE_TRACKER_FILE = "last_fetch_date.json"
-DATA_FILE = "bls_data.csv"
+DATA_FILE = "labor_statistics.csv"
 
-st.title("BLS Monthly Data Dashboard")
-st.write("This dashboard displays the latest BLS data trends.")
+st.title("Labor Statistics Dashboard")
 
-# Check if data is available
+# Check if the data file exists
 if not os.path.exists(DATA_FILE):
-    st.error("No data available. Please run data_fetch.py first to fetch the data.")
+    st.error("Data file not found. Please run 'fetch_data.py' to collect the data.")
 else:
+    # Load data
     data = pd.read_csv(DATA_FILE)
-    st.info("Data loaded from local CSV.")
+    data["date"] = pd.to_datetime(data["date"])
+    
+    st.write("## Overview")
+    st.write("This dashboard presents labor market data such as total non-farm workers and unemployment rates.")
+    
+    # Let users select which series to view
+    series_options = sorted(data["series"].unique())
+    selected_series = st.multiselect("Select the data series to display", series_options, default=series_options)
 
-    # Display Last Update Date
-    if os.path.exists(DATE_TRACKER_FILE):
-        with open(DATE_TRACKER_FILE, "r") as file:
-            last_fetch_date = json.load(file)["last_fetch"]
-            st.subheader(f"Last Data Update: {last_fetch_date}")
+    if selected_series:
+        filtered_data = data[data["series"].isin(selected_series)]
 
-    if not data.empty:
-        st.subheader("Data Table")
-        st.write(data)
+        # Add a date filter, if desired
+        start_date = st.date_input("Start Date", value=filtered_data["date"].min())
+        end_date = st.date_input("End Date", value=filtered_data["date"].max())
+        
+        filtered_data = filtered_data[(filtered_data["date"] >= pd.to_datetime(start_date)) & (filtered_data["date"] <= pd.to_datetime(end_date))]
 
-        st.subheader("Data Visualization")
-        series_ids = data['Series ID'].unique()
+        # Display raw data if requested
+        if st.checkbox("Show raw data"):
+            st.subheader("Raw Data")
+            st.write(filtered_data)
 
-        for series_id in series_ids:
-            st.write(f"### Series: {series_id}")
-            series_data = data[data['Series ID'] == series_id].copy()
-            series_data['Date'] = pd.to_datetime(series_data[['Year', 'Month']].assign(day=1))
-            series_data = series_data.sort_values('Date')
+        # Create a line chart
+        st.subheader("Time Series Chart")
+        chart_data = filtered_data.pivot(index="date", columns="series", values="value")
+        st.line_chart(chart_data)
 
-            # Plot using Matplotlib
-            fig, ax = plt.subplots()
-            ax.plot(series_data['Date'], series_data['Value'], marker='o', linestyle='-')
-            ax.set_title(f"Trend for Series {series_id}")
-            ax.set_xlabel("Date")
-            ax.set_ylabel("Value")
-            ax.grid(True)
-            st.pyplot(fig)
+        # Some basic statistics
+        st.subheader("Summary Statistics")
+        st.write(filtered_data.groupby("series")["value"].describe())
     else:
-        st.warning("No data available to display.")
+        st.warning("Please select at least one series to display.")
