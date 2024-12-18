@@ -1,61 +1,113 @@
+import streamlit as st
 import requests
+import json
 import pandas as pd
-from datetime import datetime
+import matplotlib.pyplot as plt
+import datetime
 import os
 
-API_KEY = "YOUR_API_KEY_HERE"
-SERIES_IDS = {
-    "Non-Farm Workers": "CES0000000001",
-    "Unemployment Rate": "LNS14000000",
-}
+# File to store the last fetch date
+DATE_TRACKER_FILE = "last_fetch_date.json"
+DATA_FILE = "bls_data.csv"
 
-def fetch_bls_data(series_id, start_year, end_year):
-    url = "https://api.bls.gov/publicAPI/v2/timeseries/data/"
-    payload = {
-        "seriesid": [series_id],
-        "startyear": start_year,
-        "endyear": end_year,
-        "registrationkey": API_KEY,
-    }
-    response = requests.post(url, json=payload)
-    if response.status_code == 200:
-        data = response.json()
-        if data["status"] == "REQUEST_SUCCEEDED":
-            return pd.DataFrame(data["Results"]["series"][0]["data"])
-    return pd.DataFrame()
+# Function to check the last update date
+def should_update_data():
+    if not os.path.exists(DATE_TRACKER_FILE):
+        return True
+    with open(DATE_TRACKER_FILE, "r") as file:
+        data = json.load(file)
+        last_fetch_date = datetime.datetime.strptime(data["last_fetch"], "%Y-%m-%d")
+    return (datetime.datetime.now() - last_fetch_date).days >= 30
 
-def convert_period_to_date(year, period):
-    if period.startswith("M"):
-        return f"{year}-{period[1:].zfill(2)}-01"
-    elif period.startswith("Q"):
-        quarter_to_month = {"Q01": "01", "Q02": "04", "Q03": "07", "Q04": "10"}
-        return f"{year}-{quarter_to_month[period]}-01"
-    return None
+# Function to save the current fetch date
+def update_fetch_date():
+    with open(DATE_TRACKER_FILE, "w") as file:
+        json.dump({"last_fetch": datetime.datetime.now().strftime("%Y-%m-%d")}, file)
 
-def collect_data():
-    current_year = datetime.now().year
-    start_year = current_year - 1
-    all_data = []
-    for name, series_id in SERIES_IDS.items():
-        print(f"Fetching data for {name} ({series_id})...")
-        df = fetch_bls_data(series_id, start_year, current_year)
-        if not df.empty and set(["year", "period", "value"]).issubset(df.columns):
-            df["date"] = df.apply(lambda row: convert_period_to_date(row["year"], row["period"]), axis=1)
-            df = df.dropna(subset=["date"])
-            df["date"] = pd.to_datetime(df["date"], format="%Y-%m-%d")
-            df["series"] = name
-            df = df[["date", "value", "series"]]
-            all_data.append(df)
-        else:
-            print(f"No data found for {name}.")
-    if all_data:
-        return pd.concat(all_data, ignore_index=True)
-    return pd.DataFrame()
+# Function to fetch and process data
+def fetch_bls_data():
+    headers = {'Content-type': 'application/json'}
+    current_year = datetime.datetime.now().year
+    last_year = current_year - 1
+    data = json.dumps({
+        "seriesid": [
+            "LNS14000000", "CES0000000001", "LNS11000000", 
+            "LNS12000000", "LNS13000000", "CES0500000002", "CES0500000007"
+        ],
+        "startyear": str(last_year),
+        "endyear": str(current_year)
+    })
+    
+    p = requests.post('https://api.bls.gov/publicAPI/v2/timeseries/data/', data=data, headers=headers)
+    json_data = json.loads(p.text)
+    
+    # Inspect the raw API response
+    st.write(json_data)
 
-if __name__ == "__main__":
-    data = collect_data()
-    if not data.empty:
-        data.to_csv("labor_statistics.csv", index=False)
-        print("Data saved to labor_statistics.csv")
+    all_series_data = []
+    for series in json_data.get('Results', {}).get('series', []):
+        seriesId = series['seriesID']
+        for item in series['data']:
+            if 'M01' <= item['period'] <= 'M12':  # Monthly data only
+                all_series_data.append({
+                    "Series ID": seriesId,
+                    "Year": int(item['year']),
+                    "Month": int(item['period'][1:]),
+                    "Value": float(item['value'])
+                })
+
+    if all_series_data:
+        df = pd.DataFrame(all_series_data)
+        df.to_csv(DATA_FILE, index=False)  # Save data locally
+        update_fetch_date()
+        return df
     else:
-        print("No data collected.")
+        st.error("No data was returned from the BLS API. Check the API request.")
+        return pd.DataFrame()
+
+# Load data if available, or fetch it
+if not os.path.exists(DATA_FILE) or should_update_data():
+    st.info("Fetching updated data...")
+    data = fetch_bls_data()
+    if not data.empty:
+        st.success("Data successfully updated!")
+else:
+    data = pd.read_csv(DATA_FILE)
+    st.info("Data is up to date.")
+
+# Dashboard Layout
+st.title("BLS Monthly Data Dashboard")
+st.write("This dashboard displays the latest BLS data trends.")
+
+# Display Last Update Date
+if os.path.exists(DATE_TRACKER_FILE):
+    with open(DATE_TRACKER_FILE, "r") as file:
+        last_fetch_date = json.load(file)["last_fetch"]
+        st.subheader(f"Last Data Update: {last_fetch_date}")
+
+# Data Table Display
+if not data.empty:
+    st.subheader("Data Table")
+    st.write(data)  # Display data using st.write for compatibility
+
+    # Visualization
+    st.subheader("Data Visualization")
+    series_ids = data['Series ID'].unique()
+
+    for series_id in series_ids:
+        st.write(f"### Series: {series_id}")
+        series_data = data[data['Series ID'] == series_id].copy()
+        series_data['Date'] = pd.to_datetime(series_data[['Year', 'Month']].assign(day=1))
+        series_data = series_data.sort_values('Date')
+
+        # Plot using Matplotlib
+        fig, ax = plt.subplots()
+        ax.plot(series_data['Date'], series_data['Value'], marker='o', linestyle='-')
+        ax.set_title(f"Trend for Series {series_id}")
+        ax.set_xlabel("Date")
+        ax.set_ylabel("Value")
+        ax.grid(True)
+        st.pyplot(fig)
+else:
+    st.warning("No data available to display.")
+
