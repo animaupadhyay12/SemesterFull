@@ -1,68 +1,78 @@
 import requests
-import json
 import pandas as pd
-import datetime
+from datetime import datetime
 import os
 
-# File to store the last fetch date
-DATE_TRACKER_FILE = "last_fetch_date.json"
-DATA_FILE = "bls_data.csv"
+# Replace this with your actual API key from BLS
+API_KEY = "YOUR_API_KEY_HERE"
 
-def should_update_data():
-    if not os.path.exists(DATE_TRACKER_FILE):
-        return True
-    with open(DATE_TRACKER_FILE, "r") as file:
-        data = json.load(file)
-        last_fetch_date = datetime.datetime.strptime(data["last_fetch"], "%Y-%m-%d")
-    return (datetime.datetime.now() - last_fetch_date).days >= 30
+# Dictionary of BLS series IDs to fetch
+SERIES_IDS = {
+    "Non-Farm Workers": "CES0000000001",
+    "Unemployment Rate": "LNS14000000",
+    # Add more series if needed
+}
 
-def update_fetch_date():
-    with open(DATE_TRACKER_FILE, "w") as file:
-        json.dump({"last_fetch": datetime.datetime.now().strftime("%Y-%m-%d")}, file)
+def fetch_bls_data(series_id, start_year, end_year):
+    """Fetch data from BLS API for a given series and time range."""
+    url = "https://api.bls.gov/publicAPI/v2/timeseries/data/"
+    payload = {
+        "seriesid": [series_id],
+        "startyear": str(start_year),
+        "endyear": str(end_year),
+        "registrationkey": API_KEY,
+    }
+    response = requests.post(url, json=payload)
+    if response.status_code == 200:
+        data = response.json()
+        if data.get("status") == "REQUEST_SUCCEEDED":
+            return pd.DataFrame(data["Results"]["series"][0]["data"])
+    return pd.DataFrame()
 
-def fetch_bls_data():
-    headers = {'Content-type': 'application/json'}
-    current_year = datetime.datetime.now().year
-    last_year = current_year - 1
-    data = json.dumps({
-        "seriesid": [
-            "LNS14000000", "CES0000000001", "LNS11000000", 
-            "LNS12000000", "LNS13000000", "CES0500000002", "CES0500000007"
-        ],
-        "startyear": str(last_year),
-        "endyear": str(current_year)
-    })
+def convert_period_to_date(year, period):
+    """Convert BLS period to a proper datetime string."""
+    if period.startswith("M"):
+        # Monthly data
+        return f"{year}-{period[1:].zfill(2)}-01"
+    elif period.startswith("Q"):
+        # Quarterly data
+        quarter_to_month = {"Q01": "01", "Q02": "04", "Q03": "07", "Q04": "10"}
+        return f"{year}-{quarter_to_month[period]}-01"
+    return None
 
-    p = requests.post('https://api.bls.gov/publicAPI/v2/timeseries/data/', data=data, headers=headers)
-    json_data = json.loads(p.text)
+def collect_data():
+    """Collect data for all series over the last year and current year."""
+    current_year = datetime.now().year
+    start_year = current_year - 1  # At least one year of previous data
 
-    # Print or log the raw API response if you need to inspect
-    # print(json_data)
+    all_data = []
+    for name, series_id in SERIES_IDS.items():
+        print(f"Fetching data for {name} ({series_id})...")
+        df = fetch_bls_data(series_id, start_year, current_year)
+        if not df.empty and {"year", "period", "value"}.issubset(df.columns):
+            # Convert periods to actual dates
+            df["date"] = df.apply(lambda row: convert_period_to_date(row["year"], row["period"]), axis=1)
+            df.dropna(subset=["date"], inplace=True)
 
-    all_series_data = []
-    for series in json_data.get('Results', {}).get('series', []):
-        seriesId = series['seriesID']
-        for item in series['data']:
-            if 'M01' <= item['period'] <= 'M12':  # Monthly data only
-                all_series_data.append({
-                    "Series ID": seriesId,
-                    "Year": int(item['year']),
-                    "Month": int(item['period'][1:]),
-                    "Value": float(item['value'])
-                })
+            df["date"] = pd.to_datetime(df["date"], format="%Y-%m-%d")
+            df["value"] = pd.to_numeric(df["value"], errors="coerce")
+            df["series"] = name
+            df = df[["date", "value", "series"]]
+            all_data.append(df)
+        else:
+            print(f"No data found for {name}.")
 
-    if all_series_data:
-        df = pd.DataFrame(all_series_data)
-        df.to_csv(DATA_FILE, index=False)
-        update_fetch_date()
-        print("Data successfully fetched and saved.")
-    else:
-        print("No data was returned from the BLS API. Check the API request.")
+    if all_data:
+        final_df = pd.concat(all_data, ignore_index=True)
+        # Sort by date for convenience
+        final_df.sort_values(by="date", inplace=True)
+        return final_df
+    return pd.DataFrame()
 
 if __name__ == "__main__":
-    # Only fetch data if needed
-    if not os.path.exists(DATA_FILE) or should_update_data():
-        print("Fetching updated data...")
-        fetch_bls_data()
+    data = collect_data()
+    if not data.empty:
+        data.to_csv("labor_statistics.csv", index=False)
+        print("Data saved to labor_statistics.csv")
     else:
-        print("Data is up to date.")
+        print("No data collected.")
