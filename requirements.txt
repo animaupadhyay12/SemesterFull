@@ -1,8 +1,4 @@
-python-3.10.12
 streamlit
 requests
-json
-pandas 
-matplotlib.pyplot 
-datetime
-os
+pandas
+matplotlib
